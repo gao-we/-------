@@ -1,86 +1,102 @@
-from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import DiaryEntry
-from app.data.diary_db import diary_records, diary_compressed_storage, diary_comment_tree
+from fastapi import APIRouter, HTTPException, Query, Depends
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.models.domain import Diary, User, Location, Comment
 from app.core.algorithms.trie_kmp import kmp_search
 from app.core.algorithms.huffman import HuffmanCompressor
 import uuid
+import json
 
 router = APIRouter()
 compressor = HuffmanCompressor()
 
 @router.post("/diary")
-def create_diary(title: str, content: str):
+def create_diary(title: str, content: str, db: Session = Depends(get_db)):
     """
     发布日记并存储。同时运用哈夫曼编码进行压缩存储以节约空间。
+    为演示，如果没有用户或位置，会自动选用第一个。
     """
-    d_id = str(uuid.uuid4())[:8]
-    
-    # 原始存储
-    diary_records[d_id] = {
-        "title": title,
-        "content": content,
-        "likes": 0,
-        "views": 0
-    }
-    diary_comment_tree[d_id] = []
+    first_user = db.query(User).first()
+    first_loc = db.query(Location).first()
+    if not first_user or not first_loc:
+        raise HTTPException(status_code=400, detail="Database not seeded with User/Location")
     
     # 满足打分要求：对内容进行无损哈夫曼压缩
     comp_content, mapping = compressor.compress(content)
-    diary_compressed_storage[d_id] = {
-        "compressed": comp_content,
-        "reverse_mapping": {v: k for k, v in mapping.items()}
-    }
+    reverse_map = {v: k for k, v in mapping.items()}
+
+    new_diary = Diary(
+        user_id=first_user.id,
+        location_id=first_loc.id,
+        title=title,
+        content=content,
+        compressed_content=comp_content,
+        huffman_map=reverse_map
+    )
+    db.add(new_diary)
+    db.commit()
+    db.refresh(new_diary)
 
     return {
         "status": "success", 
-        "id": d_id, 
+        "id": new_diary.id, 
         "compression_ratio": f"{len(comp_content) / (len(content)*8 * 2):.2%}" if content else "0%"
     }
 
 @router.get("/diary/search")
-def search_diary(keyword: str = Query(..., description="要查找的日记文本关键词")):
+def search_diary(keyword: str = Query(..., description="要查找的日记文本关键词"), db: Session = Depends(get_db)):
     """
     旅游日记搜索。
     基于 KMP 的全文字符串精确搜索。
     """
+    all_diaries = db.query(Diary).all()
     results = []
-    for d_id, record in diary_records.items():
+    
+    for record in all_diaries:
         # 分别在标题和内容中进行 O(N+M) 的高效查找
-        if kmp_search(record["title"], keyword) or kmp_search(record["content"], keyword):
-            results.append({"id": d_id, **record})
+        if kmp_search(record.title, keyword) or kmp_search(record.content, keyword):
+            # 获取匹配后增加浏览量机制
+            record.views += 1
+            results.append({
+                "id": record.id, 
+                "title": record.title, 
+                "views": record.views
+            })
             
-    # 增加游览量 (热度)
-    for r in results:
-        diary_records[r["id"]]["views"] += 1
+    db.commit()
         
     # 可复用 成员 B 写的 Top-K 按浏览量排序...
     results.sort(key=lambda x: x["views"], reverse=True)
     return {"status": "success", "keyword": keyword, "matches": len(results), "results": results}
 
 @router.get("/diary/{diary_id}/decompress")
-def get_compressed_diary(diary_id: str):
+def get_compressed_diary(diary_id: int, db: Session = Depends(get_db)):
     """
     展示哈夫曼解压过程API
     """
-    if diary_id not in diary_compressed_storage:
-        raise HTTPException(404, "日记压缩档不存在")
+    diary = db.query(Diary).filter(Diary.id == diary_id).first()
+    if not diary or not diary.compressed_content:
+        raise HTTPException(status_code=404, detail="日记不存在或无压缩数据")
         
-    archive = diary_compressed_storage[diary_id]
-    original_text = compressor.decompress(archive["compressed"], archive["reverse_mapping"])
+    original_text = compressor.decompress(diary.compressed_content, diary.huffman_map)
     return {
         "id": diary_id,
-        "binary_data": archive["compressed"],
+        "binary_data": diary.compressed_content,
         "decompressed_text": original_text
     }
 
+# 多叉树
+diary_comment_tree = {}
+
 @router.post("/diary/{diary_id}/comment")
-def add_comment(diary_id: str, content: str, parent_comment_id: str = None):
-    """
-    旅游日记交流（评论与点赞）。
-    使用 多叉树 结构解决无限极评论/楼中楼回复模型。
-    """
+def add_comment(diary_id: int, content: str, parent_comment_id: str = None, db: Session = Depends(get_db)):
+    # 检查日记是否存在
+    count = db.query(Diary).filter(Diary.id == diary_id).count()
+    if count == 0:
+        raise HTTPException(status_code=404, detail="Diary not found")
+        
     if diary_id not in diary_comment_tree:
-        raise HTTPException(code=404, detail="Diary not found")
+        diary_comment_tree[diary_id] = []
         
     comment_id = f"c_{str(uuid.uuid4())[:6]}"
     new_node = {
@@ -108,4 +124,3 @@ def add_comment(diary_id: str, content: str, parent_comment_id: str = None):
             raise HTTPException(status_code=404, detail="Parent comment not found")
             
     return {"status": "success", "comment_id": comment_id, "tree": diary_comment_tree[diary_id]}
-

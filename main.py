@@ -1,11 +1,32 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import routes_a, routes_b, routes_c
+from app.database import engine
+from app.models.domain import Base
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. 创建数据库表
+    Base.metadata.create_all(bind=engine)
+    
+    # 2. 从数据库初始化测试数据（如果没有的话）
+    from app.data.seed import seed_data
+    seed_data()
+    
+    # 3. 将数据库中的节点与边载入内存邻接表
+    import app.data.map_builder as mb
+    mb.load_graph_from_db(mb.campus_graph)
+    # 同时可以初始化搜索引擎 Trie/KMP 等
+    
+    yield
+    # 清理阶段（例如关闭一些连接）
 
 app = FastAPI(
     title="个性化旅游系统 API",
     description="数据结构大作业 - 后端系统",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS 配置，方便前端联调

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>热门景点推荐 - 个性化旅游系统</title>
+    <!-- 引入 Tailwind CSS 方便快速好看的样式 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <!-- 引入 Axios 用于请求数据 -->
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        .fade-enter-active, .fade-leave-active {
+            transition: opacity 0.5s ease;
+        }
+        .fade-enter-from, .fade-leave-to {
+            opacity: 0;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="app" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- 头部导航栏 -->
+        <header class="mb-8 flex justify-between items-center pb-4 border-b border-gray-200">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">🌍 热门景点推荐</h1>
+                <p class="mt-2 text-sm text-gray-600">基于自建 Top-K 最小堆算法发现城市中最高热度地点</p>
+            </div>
+        </header>
+
+        <!-- 控制面板 -->
+        <div class="bg-white p-4 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 items-center">
+            <div class="flex items-center space-x-2">
+                <label for="sortBy" class="text-sm font-medium text-gray-700">排序策略:</label>
+                <select id="sortBy" v-model="sortBy" @change="fetchAttractions" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md border">
+                    <option value="heat">🔥 按热度排序 (默认)</option>
+                    <option value="score">⭐ 按评分排序</option>
+                </select>
+            </div>
+
+            <div class="flex items-center space-x-2">
+                <label for="limit" class="text-sm font-medium text-gray-700">显示数量:</label>
+                <input type="number" id="limit" v-model.number="limit" @change="fetchAttractions" min="1" max="50" class="block w-20 pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md border">
+            </div>
+
+            <button @click="fetchAttractions" class="ml-auto inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                <svg v-if="loading" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                刷新数据
+            </button>
+        </div>
+
+        <!-- 错误提示 -->
+        <div v-if="error" class="bg-red-50 border-l-4 border-red-400 p-4 mb-6">
+            <div class="flex">
+                <div class="ml-3">
+                    <p class="text-sm text-red-700">
+                        加载数据失败，请确保后端的 FastAPI 服务器正在运行 (端口 8000)。
+                        <br>
+                        错误信息: {{ error }}
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 景点卡片网格 -->
+        <transition name="fade">
+            <div v-if="!loading && attractions.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <!-- 景点卡片 -->
+                <div v-for="(poi, index) in attractions" :key="poi.id" class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-xl transition-shadow duration-300 transform hover:-translate-y-1">
+                    <!-- 顶部的装饰图 (因为没有真实图片，用渐变色块模拟) -->
+                    <div class="h-32 w-full bg-gradient-to-r" :class="getGradient(index)">
+                        <div class="w-full h-full bg-black bg-opacity-20 flex items-center justify-center">
+                            <span class="text-4xl font-bold text-white opacity-80 decoration-slice">#{{ index + 1 }}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="p-5">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="text-lg font-bold text-gray-900 truncate" :title="poi.name">{{ poi.name }}</h3>
+                        </div>
+                        
+                        <div class="flex items-center mt-2 mb-4">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                {{ poi.category }}
+                            </span>
+                        </div>
+                        
+                        <div class="pt-4 border-t border-gray-100 flex justify-between items-center text-sm text-gray-500">
+                            <span>ID: {{ poi.id }}</span>
+                            <button class="text-indigo-600 hover:text-indigo-900 font-medium">查看详情 »</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <!-- 空数据提示 -->
+        <div v-if="!loading && attractions.length === 0 && !error" class="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">暂无数据</h3>
+            <p class="mt-1 text-sm text-gray-500">尝试修改过滤条件或刷新页面。</p>
+        </div>
+        
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const attractions = ref([]);
+                const loading = ref(false);
+                const error = ref(null);
+                const sortBy = ref('heat');
+                const limit = ref(12);
+
+                // 随机生动渐变色，用于卡片封面
+                const gradients = [
+                    'from-purple-500 to-indigo-500',
+                    'from-pink-500 to-rose-500',
+                    'from-blue-400 to-cyan-500',
+                    'from-emerald-400 to-teal-500',
+                    'from-orange-400 to-red-500',
+                    'from-yellow-400 to-orange-500',
+                ];
+
+                const getGradient = (index) => {
+                    return gradients[index % gradients.length];
+                };
+
+                const fetchAttractions = async () => {
+                    loading.value = true;
+                    error.value = null;
+                    try {
+                        // 调用后端的推荐接口，排序选项和限制数量作为查询参数
+                        const response = await axios.get(`http://localhost:8000/api/recommendation/suggest/attractions`, {
+                            params: {
+                                sort_by: sortBy.value,
+                                limit: limit.value
+                            }
+                        });
+                        if (response.data && response.data.recommendations) {
+                            attractions.value = response.data.recommendations;
+                        }
+                    } catch (err) {
+                        console.error('获取景点失败:', err);
+                        error.value = err.message || '未知网络错误';
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                // 页面加载时自动获取数据
+                onMounted(() => {
+                    fetchAttractions();
+                });
+
+                return {
+                    attractions,
+                    loading,
+                    error,
+                    sortBy,
+                    limit,
+                    fetchAttractions,
+                    getGradient
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
