@@ -110,3 +110,32 @@ def recommend_foods(
         "recommendations": [{"id": i.id, "name": i.name, "rating": i.rating, "price_range": i.price_range} for i in top_items]
     }
 
+
+import fastapi
+from app.models.domain import Location
+
+@router.get("/suggest/attractions/{poi_id}")
+def get_attraction_detail(poi_id: int, db: Session = Depends(get_db)):
+    """
+    获取单个景点的详细信息（包含描述）
+    """
+    poi = db.query(POI).filter(POI.id == poi_id).first()
+    if not poi:
+        raise fastapi.HTTPException(status_code=404, detail="查找不到该地点")
+        
+    # 查询关联的实际 Location 获取详情描述信息
+    location = db.query(Location).filter(Location.id == poi.location_id).first()
+    
+    return {
+        "status": "success",
+        "data": {
+            "id": poi.id,
+            "name": poi.name,
+            "category": poi.category,
+            "latitude": float(poi.latitude) if poi.latitude else None,
+            "longitude": float(poi.longitude) if poi.longitude else None,
+            "city": location.city if location else "未知",
+            # 如果没有专门设置过描述（因为是随机种子数据），我们给它加上一段通用演示文案
+            "description": location.description if location and location.description else f"{poi.name}是本地一个人气极高的{poi.category}景点。您可以在这里感受到独特的风景与良好的服务！",
+        }
+    }
