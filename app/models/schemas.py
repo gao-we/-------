@@ -8,6 +8,7 @@ class Location(BaseModel):
     latitude: float
     longitude: float
     category: str  # e.g., 'attraction', 'restaurant', 'hotel'
+    image_url: Optional[str] = None
 
 class RouteRequest(BaseModel):
     start_id: str

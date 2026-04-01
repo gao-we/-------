@@ -46,6 +46,7 @@ class POI(Base):
     category = Column(String(50))
     latitude = Column(DECIMAL(10, 7))
     longitude = Column(DECIMAL(10, 7))
+    image_url = Column(String(255))
 
     # Relationships
     location = relationship("Location", back_populates="pois")
@@ -73,6 +74,7 @@ class Food(Base):
     name = Column(String(100), nullable=False)
     price_range = Column(String(50))
     rating = Column(DECIMAL(3, 2), default=0.0)
+    image_url = Column(String(255))
 
     # Relationships
     location = relationship("Location", back_populates="foods")

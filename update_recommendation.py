@@ -1,4 +1,6 @@
-import random
+import re
+
+new_content = """import random
 
 class TourismItem:
     def __init__(self, item_id: str, name: str, category: str, type_val: str, heat: int, evaluate_score: float, distance: float = 0.0, image_url: str = ""):
@@ -149,3 +151,8 @@ global_recommendation_db = {
     "attraction": attractions_data,
     "food": foods_data
 }
+"""
+
+with open("app/data/recommendation_data.py", "w") as f:
+    f.write(new_content)
+

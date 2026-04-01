@@ -48,7 +48,7 @@ def recommend_attractions(
     """
     旅游游览前推荐列表。满足大作业要求：使用 Top-K 保证不完全排序。
     """
-    query = db.query(POI)
+    query = db.query(POI).filter(POI.image_url != None)
     if category:
         query = query.filter(POI.category == category)
     items = query.all()
@@ -57,7 +57,7 @@ def recommend_attractions(
     def score_func(item):
         if sort_by == "heat":
             # 假装有些 id 的地点极其热门
-            return (item.id * 13) % 100
+            return 200 - item.id if item.id <= 20 else (item.id * 13) % 100
         else:
             return (item.id * 31) % 50 / 10.0
             
@@ -67,7 +67,7 @@ def recommend_attractions(
     return {
         "status": "success",
         "strategy": sort_by,
-        "recommendations": [{"id": i.id, "name": i.name, "category": i.category} for i in top_items]
+        "recommendations": [{"id": i.id, "name": i.name, "category": i.category, "image_url": getattr(i, "image_url", None), "score": score_func(i)} for i in top_items]
     }
 
 @router.get("/suggest/foods")

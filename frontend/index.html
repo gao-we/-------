@@ -71,10 +71,14 @@
             <div v-if="!loading && attractions.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 <!-- 景点卡片 -->
                 <div v-for="(poi, index) in attractions" :key="poi.id" class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-xl transition-shadow duration-300 transform hover:-translate-y-1">
-                    <!-- 顶部的装饰图 (因为没有真实图片，用渐变色块模拟) -->
-                    <div class="h-32 w-full bg-gradient-to-r" :class="getGradient(index)">
-                        <div class="w-full h-full bg-black bg-opacity-20 flex items-center justify-center">
-                            <span class="text-4xl font-bold text-white opacity-80 decoration-slice">#{{ index + 1 }}</span>
+                    <!-- 顶部的装饰图 -->
+                    <div class="h-40 w-full relative">
+                        <img :src="poi.image_url || 'https://images.unsplash.com/photo-1501504905252-473c47e087f8?auto=format&fit=crop&w=500&q=60'" alt="景区图片" class="w-full h-full object-cover" />
+                        <div class="absolute top-2 left-2 bg-black bg-opacity-60 text-white text-xs font-bold px-2 py-1 rounded">
+                            TOP {{ index + 1 }}
+                        </div>
+                        <div class="absolute bottom-2 right-2 bg-white bg-opacity-90 text-yellow-600 text-xs font-bold px-2 py-1 rounded-full flex items-center shadow-sm">
+                            ⭐ {{ poi.score }}
                         </div>
                     </div>
                     
@@ -174,21 +178,6 @@
                     selectedPoi.value = null;
                 };
 
-
-                // 随机生动渐变色，用于卡片封面
-                const gradients = [
-                    'from-purple-500 to-indigo-500',
-                    'from-pink-500 to-rose-500',
-                    'from-blue-400 to-cyan-500',
-                    'from-emerald-400 to-teal-500',
-                    'from-orange-400 to-red-500',
-                    'from-yellow-400 to-orange-500',
-                ];
-
-                const getGradient = (index) => {
-                    return gradients[index % gradients.length];
-                };
-
                 const fetchAttractions = async () => {
                     loading.value = true;
                     error.value = null;
@@ -231,8 +220,7 @@
                     error,
                     sortBy,
                     limit,
-                    fetchAttractions,
-                    getGradient
+                    fetchAttractions
                 };
             }
         }).mount('#app');

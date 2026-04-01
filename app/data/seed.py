@@ -26,19 +26,21 @@ def seed_data():
     service_categories = ["商店", "饭店", "洗手间", "食堂", "超市", "咖啡馆", "急救点", "饮水机", "ATM", "停车场", "休息长椅"]
     
     pois = []
-    # 建筑物 (30个)
-    for i in range(1, 31):
+    from app.data.recommendation_data import attractions_data, foods_data
+    # 使用推荐数据中的真实数据
+    for i, a in enumerate(attractions_data[:80]):
         poi = POI(
             location_id=main_location.id,
-            name=f"建筑物_{i}",
-            category=random.choice(buildings_categories),
+            name=a.name,
+            category=a.category,
             latitude=random.uniform(39.9, 40.0),
-            longitude=random.uniform(116.3, 116.4)
+            longitude=random.uniform(116.3, 116.4),
+            image_url=a.image_url
         )
         pois.append(poi)
     
-    # 服务设施 (60个)
-    for i in range(1, 61):
+    # 服务设施
+    for i in range(1, 31):
         poi = POI(
             location_id=main_location.id,
             name=f"设施_{i}",

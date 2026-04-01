@@ -26,7 +26,8 @@ CREATE TABLE pois (
     name VARCHAR(100) NOT NULL,
     category VARCHAR(50),
     latitude DECIMAL(10, 7),
-    longitude DECIMAL(10, 7)
+    longitude DECIMAL(10, 7),
+    image_url VARCHAR(255)
 );
 
 -- 创建道路表(用于图论导航)
@@ -46,7 +47,8 @@ CREATE TABLE foods (
     poi_id INT REFERENCES pois(id) ON DELETE SET NULL,
     name VARCHAR(100) NOT NULL,
     price_range VARCHAR(50),
-    rating DECIMAL(3, 2) DEFAULT 0.0 CHECK (rating BETWEEN 0.0 AND 5.0)
+    rating DECIMAL(3, 2) DEFAULT 0.0 CHECK (rating BETWEEN 0.0 AND 5.0),
+    image_url VARCHAR(255)
 );
 
 -- 创建旅游日记表
