@@ -1,0 +1,70 @@
+base_url: http://127.0.0.1:5173/index.html
+scenarios:
+  - name: attractions_tab
+    steps:
+      - action: goto
+      - action: expect_text
+        value: "景点推荐"
+      - action: click_text
+        value: "刷新"
+      - action: expect_any_text
+        values: ["评分", "暂无数据"]
+
+  - name: routing_tab
+    steps:
+      - action: click_text
+        value: "路线推荐"
+      - action: expect_text
+        value: "路线推荐（单目标）"
+      - action: choose_first_select_option
+        index: 0
+      - action: choose_first_select_option
+        index: 1
+      - action: click_text
+        value: "计算路线"
+      - action: expect_text
+        value: "路径："
+
+  - name: waypoint_tsp_tab
+    steps:
+      - action: click_text
+        value: "途经点路线推荐"
+      - action: expect_text
+        value: "多点环游路线"
+      - action: choose_first_select_option
+        index: 0
+      - action: fill_placeholder
+        placeholder: "输入途经点ID，英文逗号分隔，例如：2,8,25"
+        value: "2,3"
+      - action: click_text
+        value: "计算多点环游路线"
+      - action: expect_text
+        value: "路径："
+
+  - name: food_tab
+    steps:
+      - action: click_text
+        value: "美食推荐"
+      - action: expect_text
+        value: "美食推荐"
+      - action: click_text
+        value: "刷新美食推荐"
+      - action: expect_any_text
+        values: ["评分", "刷新美食推荐"]
+
+  - name: diary_tab
+    steps:
+      - action: click_text
+        value: "旅游日记管理与交流"
+      - action: expect_text
+        value: "发布日记"
+      - action: fill_placeholder
+        placeholder: "标题"
+        value: "E2E自动化日记"
+      - action: fill_placeholder
+        placeholder: "内容"
+        value: "这是一次自动化测试写入的日记内容。"
+      - action: click_text
+        value: "发布"
+      - action: expect_text
+        value: "浏览量"

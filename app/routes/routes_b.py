@@ -5,11 +5,29 @@ from app.database import get_db
 from app.models.domain import POI, Food
 from app.core.algorithms.sort_search import get_top_k, fuzzy_search_filter
 from app.core.algorithms.trie_kmp import Trie
+from app.data.map_builder import campus_graph
 
 router = APIRouter()
 
 # 字典树，用于前缀提示
 search_trie = Trie()
+
+SCHOOL_KEYWORDS = ("大学", "学院", "校园", "学校")
+SCENIC_KEYWORDS = ("景", "公园", "博物馆", "古镇", "山", "湖", "乐园", "广场")
+SERVICE_CATEGORIES = ("商店", "饭店", "洗手间", "食堂", "超市", "咖啡馆", "急救点", "饮水机", "ATM", "停车场", "休息长椅")
+
+def _destination_type(name: str, category: str) -> str:
+    text = f"{name}{category}"
+    if any(k in text for k in SCHOOL_KEYWORDS):
+        return "school"
+    if any(k in text for k in SCENIC_KEYWORDS):
+        return "scenic"
+    return "mixed"
+
+def _is_destination_candidate(poi: POI) -> bool:
+    if not poi.image_url:
+        return False
+    return _destination_type(poi.name or "", poi.category or "") in ("school", "scenic")
 
 def init_search_trie(db: Session):
     """
@@ -36,6 +54,117 @@ def search_autocomplete(prefix: str, db: Session = Depends(get_db)):
         "matches_count": len(ids),
         # 实际开发中应该到数据库中取回具体的记录展示，这里做ID简化返回
         "matched_ids": list(ids)[:10] 
+    }
+
+@router.get("/suggest/destinations")
+def recommend_destinations(
+    limit: int = 12,
+    sort_by: str = Query("heat", description="排序依据: heat 或 score"),
+    destination_type: str = Query("all", description="可选: all, scenic, school"),
+    db: Session = Depends(get_db)
+):
+    """
+    首页目的地推荐：先推荐多个景区/学校供用户选择，再进入目的地详情页。
+    """
+    items = db.query(POI).filter(POI.image_url != None).all()
+    destination_items = [p for p in items if _is_destination_candidate(p)]
+    if not destination_items:
+        destination_items = items
+
+    if destination_type in ("scenic", "school"):
+        destination_items = [
+            p for p in destination_items
+            if _destination_type(p.name or "", p.category or "") == destination_type
+        ]
+
+    def score_func(item):
+        if sort_by == "score":
+            return (item.id * 31) % 50 / 10.0
+        return 200 - item.id if item.id <= 20 else (item.id * 13) % 100
+
+    top_items = get_top_k(destination_items, k=limit, key_func=score_func)
+    return {
+        "status": "success",
+        "strategy": sort_by,
+        "destination_type": destination_type,
+        "recommendations": [
+            {
+                "id": i.id,
+                "name": i.name,
+                "category": i.category,
+                "image_url": i.image_url,
+                "score": score_func(i),
+                "type": _destination_type(i.name or "", i.category or ""),
+            }
+            for i in top_items
+        ],
+    }
+
+@router.get("/destination/{poi_id}/recommendations")
+def destination_recommendations(
+    poi_id: int,
+    max_distance: float = 1500.0,
+    limit_places: int = 12,
+    limit_foods: int = 8,
+    db: Session = Depends(get_db)
+):
+    """
+    目的地场所推荐：进入景区/学校后，推荐其周边服务场所和美食。
+    """
+    poi = db.query(POI).filter(POI.id == poi_id).first()
+    if not poi:
+        raise fastapi.HTTPException(status_code=404, detail="查找不到该地点")
+
+    def collect_places(distance_limit: float):
+        merged = {}
+        for cat in SERVICE_CATEGORIES:
+            facilities = campus_graph.find_nearby_facilities(str(poi.id), cat, distance_limit)
+            for f in facilities[:3]:
+                node_id = str(f.get("id"))
+                distance = float(f.get("distance", 0))
+                prev = merged.get(node_id)
+                if prev is None or distance < prev["distance"]:
+                    merged[node_id] = {
+                        "id": node_id,
+                        "name": f.get("name"),
+                        "category": f.get("category"),
+                        "distance": round(distance, 2),
+                    }
+        return merged
+
+    merged = collect_places(max_distance)
+    if not merged:
+        merged = collect_places(max_distance * 20)
+
+    nearby_places = sorted(merged.values(), key=lambda x: x["distance"])[:limit_places]
+
+    foods = db.query(Food).filter(Food.location_id == poi.location_id).all()
+    def food_score(item):
+        direct_bonus = 1.0 if item.poi_id == poi.id else 0.0
+        return float(item.rating) + direct_bonus
+
+    top_foods = get_top_k(foods, k=limit_foods, key_func=food_score)
+    return {
+        "status": "success",
+        "destination": {
+            "id": poi.id,
+            "name": poi.name,
+            "category": poi.category,
+            "image_url": poi.image_url,
+            "type": _destination_type(poi.name or "", poi.category or ""),
+        },
+        "route_start_id": str(poi.id),
+        "nearby_places": nearby_places,
+        "food_recommendations": [
+            {
+                "id": i.id,
+                "name": i.name,
+                "rating": float(i.rating) if i.rating is not None else 0.0,
+                "price_range": i.price_range,
+                "related_to_destination": i.poi_id == poi.id,
+            }
+            for i in top_foods
+        ],
     }
 
 @router.get("/suggest/attractions")
@@ -76,6 +205,7 @@ def recommend_foods(
     sort_by: str = Query("score", description="排序依据: score, heat"),
     category: Optional[str] = None,
     keyword: Optional[str] = None,
+    destination_poi_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -94,6 +224,9 @@ def recommend_foods(
         matched = fuzzy_search_filter(items, keyword, text_selector=lambda x: str(x.name), threshold=3)
         # 提取其中匹配结果的真实对象
         items = [m[1] for m in matched]
+
+    if destination_poi_id is not None:
+        items = [i for i in items if i.poi_id == destination_poi_id or i.poi_id is None]
         
     def score_func(item):
         if sort_by == "heat":

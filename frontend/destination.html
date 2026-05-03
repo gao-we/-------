@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>目的地场所推荐</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<div id="app" class="max-w-7xl mx-auto p-6">
+    <header class="mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">目的地场所推荐</h1>
+        <p class="text-gray-600 mt-2">已进入：{{ destinationName || "未选择目的地" }}</p>
+    </header>
+
+    <div v-if="error" class="mb-6 p-3 border border-red-300 bg-red-50 text-red-700 rounded">{{ error }}</div>
+
+    <section class="bg-white rounded-lg shadow p-5 mb-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h2 class="text-xl font-semibold">目的地内各场所推荐</h2>
+            <button @click="loadRecommendations" class="bg-indigo-600 text-white rounded px-4 py-2">刷新推荐</button>
+        </div>
+        <div v-if="destination" class="mb-4 p-3 border rounded bg-gray-50">
+            <p class="font-semibold">{{ destination.name }}</p>
+            <p class="text-sm text-gray-600">{{ destination.category }} · 类型 {{ destination.type }}</p>
+            <p class="text-sm text-gray-600">路线起点ID：{{ routeStartId }}</p>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div>
+                <h3 class="font-semibold mb-2">附近场所（按实际道路距离）</h3>
+                <div class="space-y-2 max-h-[420px] overflow-auto pr-2">
+                    <div v-for="p in nearbyPlaces" :key="p.id" class="border rounded p-3 bg-gray-50">
+                        <p class="font-medium">{{ p.name }}</p>
+                        <p class="text-sm text-gray-600">{{ p.category }} · {{ p.distance }}m</p>
+                        <button @click="planToPlace(p.id)" class="mt-2 text-sm bg-emerald-600 text-white px-3 py-1 rounded">从目的地规划到这里</button>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <h3 class="font-semibold mb-2">附近美食推荐</h3>
+                <div class="space-y-2 max-h-[420px] overflow-auto pr-2">
+                    <div v-for="f in foodRecommendations" :key="f.id" class="border rounded p-3 bg-gray-50">
+                        <p class="font-medium">{{ f.name }}</p>
+                        <p class="text-sm text-gray-600">评分 {{ f.rating }} · {{ f.price_range }}</p>
+                        <p v-if="f.related_to_destination" class="text-xs text-indigo-600 mt-1">与当前目的地强相关</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow p-5 mb-6">
+        <h2 class="text-xl font-semibold mb-4">路线结果</h2>
+        <div v-if="routeResult" class="border rounded p-3 bg-gray-50">
+            <p>总代价：{{ routeResult.total_cost }}</p>
+            <p class="break-all">路径：{{ routeResult.route.join(" -> ") }}</p>
+        </div>
+        <p v-else class="text-gray-600">点击某个场所的“从目的地规划到这里”可查看路径。</p>
+    </section>
+
+    <section class="bg-white rounded-lg shadow p-5">
+        <h2 class="text-xl font-semibold mb-4">旅游日记管理与交流</h2>
+
+        <div class="border rounded p-4 space-y-3 mb-4">
+            <h3 class="font-semibold">发布日记</h3>
+            <input v-model="diaryForm.title" class="border rounded px-3 py-2 w-full" placeholder="标题" />
+            <textarea v-model="diaryForm.content" class="border rounded px-3 py-2 w-full h-24" placeholder="内容"></textarea>
+            <button @click="createDiary" class="bg-indigo-600 text-white rounded px-4 py-2">发布</button>
+        </div>
+
+        <div class="border rounded p-4 space-y-3 mb-4">
+            <h3 class="font-semibold">搜索与热门</h3>
+            <div class="flex gap-2">
+                <input v-model="diarySearchKeyword" class="border rounded px-3 py-2 flex-1" placeholder="关键词" />
+                <button @click="searchDiaries" class="bg-indigo-600 text-white rounded px-4 py-2">搜索</button>
+                <button @click="listDiaries" class="bg-gray-700 text-white rounded px-4 py-2">热门列表</button>
+            </div>
+        </div>
+
+        <div class="space-y-3">
+            <div v-for="d in diaries" :key="d.id" class="border rounded p-4 bg-gray-50 space-y-2">
+                <div class="flex flex-wrap justify-between gap-2">
+                    <p class="font-semibold">{{ d.title }} <span class="text-sm text-gray-500">#{{ d.id }}</span></p>
+                    <p class="text-sm text-gray-600">浏览量 {{ d.views || 0 }}</p>
+                </div>
+                <p class="text-sm text-gray-700">{{ d.content_preview || "搜索命中结果（可点解压查看正文）" }}</p>
+                <div class="flex flex-wrap gap-2">
+                    <button @click="decompressDiary(d.id)" class="bg-indigo-600 text-white px-3 py-1 rounded text-sm">查看解压内容</button>
+                    <button @click="loadComments(d.id)" class="bg-gray-700 text-white px-3 py-1 rounded text-sm">查看评论树</button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input v-model="commentForms[d.id].content" class="border rounded px-3 py-2 md:col-span-2" placeholder="评论内容" />
+                    <input v-model="commentForms[d.id].parentId" class="border rounded px-3 py-2" placeholder="父评论ID(可选)" />
+                </div>
+                <button @click="addComment(d.id)" class="bg-emerald-600 text-white px-3 py-1 rounded text-sm">发表评论</button>
+                <pre v-if="comments[d.id]" class="text-xs bg-white border rounded p-2 overflow-auto">{{ JSON.stringify(comments[d.id], null, 2) }}</pre>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+const { createApp, ref, reactive, onMounted } = Vue;
+
+createApp({
+    setup() {
+        const API_BASE = "http://localhost:8000";
+        const error = ref("");
+        const destination = ref(null);
+        const nearbyPlaces = ref([]);
+        const foodRecommendations = ref([]);
+        const routeStartId = ref("");
+        const routeResult = ref(null);
+        const diaries = ref([]);
+        const comments = reactive({});
+        const commentForms = reactive({});
+        const diaryForm = reactive({ title: "", content: "" });
+        const diarySearchKeyword = ref("");
+
+        const params = new URLSearchParams(window.location.search);
+        const poiId = params.get("poi_id");
+        const destinationName = ref(params.get("name") || "");
+
+        const loadRecommendations = async () => {
+            if (!poiId) {
+                error.value = "缺少 poi_id 参数，请从首页重新进入。";
+                return;
+            }
+            error.value = "";
+            try {
+                const res = await axios.get(`${API_BASE}/api/recommendation/destination/${poiId}/recommendations`);
+                destination.value = res.data?.destination || null;
+                if (!destinationName.value && destination.value) destinationName.value = destination.value.name;
+                routeStartId.value = res.data?.route_start_id || "";
+                nearbyPlaces.value = res.data?.nearby_places || [];
+                foodRecommendations.value = res.data?.food_recommendations || [];
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "加载失败";
+            }
+        };
+
+        const ensureCommentForm = (id) => {
+            if (!commentForms[id]) commentForms[id] = { content: "", parentId: "" };
+        };
+
+        const planToPlace = async (targetId) => {
+            if (!routeStartId.value) return;
+            error.value = "";
+            try {
+                const body = {
+                    start_id: String(routeStartId.value),
+                    end_id: String(targetId),
+                    waypoints: []
+                };
+                const res = await axios.post(`${API_BASE}/api/routing/shortest_path`, body, {
+                    params: { strategy: "distance", transport: "any" }
+                });
+                routeResult.value = res.data;
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "路径计算失败";
+            }
+        };
+
+        const listDiaries = async () => {
+            error.value = "";
+            try {
+                const res = await axios.get(`${API_BASE}/api/social/diary/list`, { params: { limit: 20 } });
+                diaries.value = res.data?.results || [];
+                diaries.value.forEach(d => ensureCommentForm(d.id));
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "日记列表加载失败";
+            }
+        };
+
+        const searchDiaries = async () => {
+            error.value = "";
+            try {
+                const kw = diarySearchKeyword.value.trim();
+                if (!kw) {
+                    await listDiaries();
+                    return;
+                }
+                const res = await axios.get(`${API_BASE}/api/social/diary/search`, { params: { keyword: kw } });
+                diaries.value = (res.data?.results || []).map(item => ({
+                    id: item.id,
+                    title: item.title,
+                    views: item.views
+                }));
+                diaries.value.forEach(d => ensureCommentForm(d.id));
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "搜索失败";
+            }
+        };
+
+        const createDiary = async () => {
+            error.value = "";
+            try {
+                const title = diaryForm.title.trim();
+                const content = diaryForm.content.trim();
+                if (!title || !content) {
+                    error.value = "标题和内容不能为空";
+                    return;
+                }
+                await axios.post(`${API_BASE}/api/social/diary`, null, { params: { title, content } });
+                diaryForm.title = "";
+                diaryForm.content = "";
+                await listDiaries();
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "发布失败";
+            }
+        };
+
+        const addComment = async (diaryId) => {
+            error.value = "";
+            try {
+                ensureCommentForm(diaryId);
+                const form = commentForms[diaryId];
+                const content = (form.content || "").trim();
+                if (!content) {
+                    error.value = "评论内容不能为空";
+                    return;
+                }
+                const params = { content };
+                if (form.parentId && form.parentId.trim()) params.parent_comment_id = form.parentId.trim();
+                const res = await axios.post(`${API_BASE}/api/social/diary/${diaryId}/comment`, null, { params });
+                comments[diaryId] = res.data?.tree || [];
+                form.content = "";
+                form.parentId = "";
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "评论失败";
+            }
+        };
+
+        const loadComments = async (diaryId) => {
+            error.value = "";
+            try {
+                const res = await axios.get(`${API_BASE}/api/social/diary/${diaryId}/comments`);
+                comments[diaryId] = res.data?.tree || [];
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "评论树加载失败";
+            }
+        };
+
+        const decompressDiary = async (diaryId) => {
+            error.value = "";
+            try {
+                const res = await axios.get(`${API_BASE}/api/social/diary/${diaryId}/decompress`);
+                alert(res.data?.decompressed_text || "无内容");
+            } catch (err) {
+                error.value = err?.response?.data?.detail || err?.message || "解压失败";
+            }
+        };
+
+        onMounted(async () => {
+            await loadRecommendations();
+            await listDiaries();
+        });
+        return {
+            destinationName,
+            error,
+            destination,
+            nearbyPlaces,
+            foodRecommendations,
+            routeStartId,
+            routeResult,
+            loadRecommendations,
+            planToPlace,
+            diaries,
+            comments,
+            commentForms,
+            diaryForm,
+            diarySearchKeyword,
+            listDiaries,
+            searchDiaries,
+            createDiary,
+            addComment,
+            loadComments,
+            decompressDiary
+        };
+    }
+}).mount("#app");
+</script>
+</body>
+</html>

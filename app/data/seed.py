@@ -1,128 +1,227 @@
+import math
 import random
-import uuid
+from typing import Dict, List, Tuple
+
+from sqlalchemy import text
 from sqlalchemy.orm import Session
+
 from app.database import SessionLocal, engine
-from app.models.domain import Base, Location, POI, Road, User, Food, Diary
+from app.models.domain import Base, Comment, Diary, Food, Location, POI, Road, User
+from app.data.beijing_web_seed import (
+    fetch_beijing_destinations,
+    fetch_beijing_foods,
+    fetch_beijing_services,
+)
 
-def seed_data():
-    db = SessionLocal()
-    
-    # 检查是否已有数据
-    if db.query(Location).first():
-        print("数据已存在，跳过初始化")
-        db.close()
-        return
 
-    print("开始生成数据并插入 PostgreSQL...")
+def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * (math.sin(dl / 2) ** 2)
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    # 1. 创建基础 Location
-    main_location = Location(name="主校区/主景区", description="系统核心演示区", city="Beijing")
-    db.add(main_location)
+
+def _detect_legacy_dataset(db: Session) -> bool:
+    old_location = db.query(Location).filter(Location.name == "主校区/主景区").first()
+    old_tsinghua = db.query(POI).filter(POI.name.like("%清华%")).first()
+    return old_location is not None or old_tsinghua is not None
+
+
+def _clear_content_tables(db: Session) -> None:
+    db.query(Comment).delete()
+    db.query(Diary).delete()
+    db.query(Food).delete()
+    db.query(Road).delete()
+    db.query(POI).delete()
+    db.query(Location).delete()
     db.commit()
-    db.refresh(main_location)
 
-    # 2. 生成 210 个 POI 节点
-    buildings_categories = ["教学楼", "办公楼", "宿舍楼", "博物馆", "图书馆", "景点_大门"]
-    service_categories = ["商店", "饭店", "洗手间", "食堂", "超市", "咖啡馆", "急救点", "饮水机", "ATM", "停车场", "休息长椅"]
-    
-    pois = []
-    from app.data.recommendation_data import attractions_data, foods_data
-    # 使用推荐数据中的真实数据
-    for i, a in enumerate(attractions_data[:80]):
-        poi = POI(
-            location_id=main_location.id,
-            name=a.name,
-            category=a.category,
-            latitude=random.uniform(39.9, 40.0),
-            longitude=random.uniform(116.3, 116.4),
-            image_url=a.image_url
-        )
-        pois.append(poi)
-    
-    # 服务设施
-    for i in range(1, 31):
-        poi = POI(
-            location_id=main_location.id,
-            name=f"设施_{i}",
-            category=random.choice(service_categories),
-            latitude=random.uniform(39.9, 40.0),
-            longitude=random.uniform(116.3, 116.4)
-        )
-        pois.append(poi)
 
-    # 道路路口 (120个)
-    for i in range(1, 121):
-        poi = POI(
-            location_id=main_location.id,
-            name=f"路口_{i}",
-            category="道路口",
-            latitude=random.uniform(39.9, 40.0),
-            longitude=random.uniform(116.3, 116.4)
+def _seed_users_if_empty(db: Session, count: int = 12) -> None:
+    if db.query(User).count() > 0:
+        return
+    users = [
+        User(
+            username=f"beijing_user_{i}",
+            email=f"beijing_user_{i}@example.com",
+            password_hash="hashed_pw_here",
         )
-        pois.append(poi)
+        for i in range(1, count + 1)
+    ]
+    db.add_all(users)
+    db.commit()
+
+
+def _ensure_indexes(db: Session) -> None:
+    """
+    为高频查询补充索引，优化推荐和寻路相关查询。
+    """
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_pois_location_id ON pois(location_id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_pois_category ON pois(category)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_pois_name ON pois(name)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_foods_location_id ON foods(location_id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_foods_poi_id ON foods(poi_id)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_foods_name ON foods(name)"))
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_roads_start_end ON roads(start_poi_id, end_poi_id)"))
+    db.commit()
+
+
+def _build_roads_for_pois(pois: List[POI]) -> List[Road]:
+    """
+    使用经纬度近邻关系构建连通道路图，避免随机边导致数据失真。
+    """
+    random.seed(2026)
+    id_to_coord: Dict[int, Tuple[float, float]] = {
+        p.id: (float(p.latitude), float(p.longitude)) for p in pois
+    }
+    poi_ids = [p.id for p in pois]
+    edges = set()
+    roads: List[Road] = []
+
+    # 先构建链路保证整体连通
+    for idx in range(1, len(poi_ids)):
+        u = poi_ids[idx - 1]
+        v = poi_ids[idx]
+        if u == v:
+            continue
+        key = (min(u, v), max(u, v))
+        if key in edges:
+            continue
+        edges.add(key)
+        dist = _haversine_meters(*id_to_coord[u], *id_to_coord[v])
+        roads.append(
+            Road(
+                start_poi_id=u,
+                end_poi_id=v,
+                distance=round(max(10.0, dist), 2),
+                crowd_level=random.randint(1, 10),
+                transport_modes=["walk"],
+            )
+        )
+
+    # 每个点再连 2 个最近邻
+    for u in poi_ids:
+        lat_u, lon_u = id_to_coord[u]
+        nearest: List[Tuple[float, int]] = []
+        for v in poi_ids:
+            if u == v:
+                continue
+            lat_v, lon_v = id_to_coord[v]
+            nearest.append((_haversine_meters(lat_u, lon_u, lat_v, lon_v), v))
+        nearest.sort(key=lambda x: x[0])
+        for dist, v in nearest[:2]:
+            key = (min(u, v), max(u, v))
+            if key in edges:
+                continue
+            edges.add(key)
+            modes = ["walk"]
+            if dist > 1500:
+                modes.append("bike")
+            if dist > 4000:
+                modes.append("shuttle")
+            roads.append(
+                Road(
+                    start_poi_id=u,
+                    end_poi_id=v,
+                    distance=round(max(10.0, dist), 2),
+                    crowd_level=random.randint(1, 10),
+                    transport_modes=modes,
+                )
+            )
+
+    return roads
+
+
+def _seed_beijing_web_data(db: Session) -> None:
+    """
+    删除旧内容并用在线抓取的北京景区/学校/服务设施/美食数据重建数据库。
+    """
+    destinations = fetch_beijing_destinations(limit=260)
+    services = fetch_beijing_services(limit=170)
+    foods = fetch_beijing_foods(limit=140)
+    if len(destinations) < 40:
+        raise RuntimeError("在线抓取到的北京景区/学校数据不足，无法完成初始化。")
+
+    _clear_content_tables(db)
+
+    location = Location(name="北京市", description="在线抓取的北京景区与学校数据集", city="Beijing")
+    db.add(location)
+    db.commit()
+    db.refresh(location)
+
+    pois: List[POI] = []
+    for p in destinations + services:
+        if "清华" in p.name:
+            continue
+        pois.append(
+            POI(
+                location_id=location.id,
+                name=p.name,
+                category=p.category,
+                latitude=round(p.latitude, 7),
+                longitude=round(p.longitude, 7),
+                image_url=p.image_url if p.image_url else None,
+            )
+        )
 
     db.add_all(pois)
     db.commit()
 
-    # 重新查出所有的 POI 获得它们的 ID
-    all_pois = db.query(POI).all()
+    all_pois = db.query(POI).filter(POI.location_id == location.id).all()
     poi_ids = [p.id for p in all_pois]
+    if len(poi_ids) < 80:
+        raise RuntimeError("抓取后 POI 数量不足，无法构建有效推荐系统。")
 
-    # 3. 生成 300+ 条 Road
-    roads = []
-    # 连通树保证所有节点连通
-    for i in range(1, len(poi_ids)):
-        parent_id = random.choice(poi_ids[:i])
-        roads.append(Road(
-            start_poi_id=poi_ids[i],
-            end_poi_id=parent_id,
-            distance=round(random.uniform(10.0, 500.0), 2),
-            crowd_level=random.randint(1, 10),
-            transport_modes=["walk"]
-        ))
-
-    # 额外随机边
-    for _ in range(150):
-        u = random.choice(poi_ids)
-        v = random.choice(poi_ids)
-        if u != v:
-            roads.append(Road(
-                start_poi_id=u,
-                end_poi_id=v,
-                distance=round(random.uniform(10.0, 300.0), 2),
-                crowd_level=random.randint(1, 10),
-                transport_modes=[random.choice(["walk", "bike", "shuttle"])]
-            ))
-    
+    roads = _build_roads_for_pois(all_pois)
     db.add_all(roads)
     db.commit()
 
-    # 4. 生成 Foods
-    foods = []
-    for i in range(1, 40):
-        foods.append(Food(
-            location_id=main_location.id,
-            poi_id=random.choice(poi_ids),
-            name=f"特色美食_{i}",
-            price_range=random.choice(["¥0-20", "¥20-50", "¥50-100", "¥100+"]),
-            rating=round(random.uniform(3.0, 5.0), 2)
-        ))
-    db.add_all(foods)
+    destination_ids = [p.id for p in all_pois if p.category in ("景区", "学校", "博物馆")]
+    if not destination_ids:
+        destination_ids = poi_ids
 
-    # 5. 生成 Users
-    users = []
-    for i in range(1, 10):
-        users.append(User(
-            username=f"test_user_{i}",
-            email=f"user{i}@example.com",
-            password_hash="hashed_pw_here"
-        ))
-    db.add_all(users)
+    random.seed(2026)
+    food_rows: List[Food] = []
+    for item in foods:
+        if "清华" in item.name:
+            continue
+        food_rows.append(
+            Food(
+                location_id=location.id,
+                poi_id=random.choice(destination_ids),
+                name=item.name,
+                price_range=random.choice(["¥0-20", "¥20-50", "¥50-100", "¥100+"]),
+                rating=round(random.uniform(3.5, 5.0), 2),
+                image_url=None,
+            )
+        )
+    db.add_all(food_rows)
     db.commit()
 
-    print("数据库基础数据初始化(Seed)完成！")
-    db.close()
+    _seed_users_if_empty(db)
+    _ensure_indexes(db)
+
+
+def seed_data(force_reseed: bool = False) -> None:
+    db = SessionLocal()
+    try:
+        has_data = db.query(Location).first() is not None
+        legacy = _detect_legacy_dataset(db)
+
+        if has_data and not force_reseed and not legacy:
+            print("数据库已有非旧版数据，跳过初始化。")
+            return
+
+        print("开始使用在线北京数据重建数据库...")
+        _seed_beijing_web_data(db)
+        print("数据库已完成北京景区/学校在线数据初始化。")
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
     Base.metadata.create_all(bind=engine)
-    seed_data()
+    seed_data(force_reseed=True)

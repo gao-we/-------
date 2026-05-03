@@ -10,6 +10,32 @@ import json
 router = APIRouter()
 compressor = HuffmanCompressor()
 
+@router.get("/diary/list")
+def list_diaries(limit: int = 20, db: Session = Depends(get_db)):
+    """
+    日记列表：按热度(浏览量)优先排序，用于前端管理与交流页展示。
+    """
+    records = (
+        db.query(Diary)
+        .order_by(Diary.views.desc(), Diary.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "status": "success",
+        "count": len(records),
+        "results": [
+            {
+                "id": d.id,
+                "title": d.title,
+                "content_preview": (d.content[:80] + "...") if len(d.content) > 80 else d.content,
+                "views": d.views,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in records
+        ],
+    }
+
 @router.post("/diary")
 def create_diary(title: str, content: str, db: Session = Depends(get_db)):
     """
@@ -122,5 +148,15 @@ def add_comment(diary_id: int, content: str, parent_comment_id: str = None, db: 
         success = find_and_insert(diary_comment_tree[diary_id])
         if not success:
             raise HTTPException(status_code=404, detail="Parent comment not found")
-            
+             
     return {"status": "success", "comment_id": comment_id, "tree": diary_comment_tree[diary_id]}
+
+@router.get("/diary/{diary_id}/comments")
+def get_comments(diary_id: int, db: Session = Depends(get_db)):
+    """
+    获取某篇日记的完整评论树。
+    """
+    count = db.query(Diary).filter(Diary.id == diary_id).count()
+    if count == 0:
+        raise HTTPException(status_code=404, detail="Diary not found")
+    return {"status": "success", "diary_id": diary_id, "tree": diary_comment_tree.get(diary_id, [])}
