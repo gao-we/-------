@@ -116,3 +116,15 @@ class Comment(Base):
     # Relationships
     author = relationship("User", back_populates="comments")
 
+
+class CampusMapCache(Base):
+    __tablename__ = "campus_map_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    poi_id = Column(Integer, ForeignKey("pois.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(32), nullable=False, index=True)
+    radius_m = Column(Integer, nullable=False)
+    map_payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    poi = relationship("POI")

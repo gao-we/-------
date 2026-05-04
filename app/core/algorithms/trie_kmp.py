@@ -1,11 +1,12 @@
-from typing import List, Dict
+from typing import List
+from app.core.algorithms.custom_structures import SimpleHashMap, SimpleHashSet
 
 class TrieNode:
     def __init__(self):
-        self.children: Dict[str, 'TrieNode'] = {}
+        self.children = SimpleHashMap()
         self.is_end_of_word = False
         # 记录包含该关键字的日记ID列表（用于粗略的倒排索引功能）
-        self.diary_ids: set = set()
+        self.diary_ids = SimpleHashSet()
 
 class Trie:
     """
@@ -18,21 +19,21 @@ class Trie:
     def insert(self, word: str, diary_id: str):
         node = self.root
         for char in word:
-            if char not in node.children:
-                node.children[char] = TrieNode()
-            node = node.children[char]
+            if not node.children.contains(char):
+                node.children.put(char, TrieNode())
+            node = node.children.get(char)
             # 路径上的前缀也可以挂载日记，实现某些前缀搜索
             node.diary_ids.add(diary_id)
         node.is_end_of_word = True
 
-    def search_prefix(self, prefix: str) -> set:
+    def search_prefix(self, prefix: str) -> list:
         """根据前缀搜索相关日记 ID"""
         node = self.root
         for char in prefix:
-            if char not in node.children:
-                return set()
-            node = node.children[char]
-        return node.diary_ids
+            if not node.children.contains(char):
+                return []
+            node = node.children.get(char)
+        return node.diary_ids.values()
 
 def build_kmp_lps(pattern: str) -> List[int]:
     """计算 KMP 算法的 LPS (Longest Proper Prefix which is also Suffix) 数组"""

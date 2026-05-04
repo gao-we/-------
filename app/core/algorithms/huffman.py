@@ -1,6 +1,6 @@
-from collections import Counter
 from app.core.algorithms.heap_pq import MinHeap
 from typing import Dict, Tuple
+from app.core.algorithms.custom_structures import FrequencyTable
 
 class HuffmanNode:
     def __init__(self, char: str = None, freq: int = 0):
@@ -22,8 +22,10 @@ class HuffmanCompressor:
         if not text:
             return "", {}
 
-        # 1. 统计词频
-        freq_map = Counter(text)
+        # 1. 统计词频（手写哈希词频表）
+        freq_map = FrequencyTable()
+        for char in text:
+            freq_map.add(char)
         
         # 2. 构建最小堆 (借助成员A/B复用的堆)
         # 注意：往堆里塞入对象时，由于 MinHeap 按元组第一个元素比较
@@ -34,7 +36,7 @@ class HuffmanCompressor:
             heap.push(freq, (i, node))
 
         # 3. 构建哈夫曼树
-        counter_id = len(freq_map)
+        counter_id = len(text)
         while len(heap.heap) > 1:
             freq1, (_, left_node) = heap.pop()
             freq2, (_, right_node) = heap.pop()
@@ -61,8 +63,9 @@ class HuffmanCompressor:
             return
         # 叶子节点
         if node.char is not None:
-            self.codes[node.char] = current_code
-            self.reverse_codes[current_code] = node.char
+            code = current_code if current_code else "0"
+            self.codes[node.char] = code
+            self.reverse_codes[code] = node.char
             return
 
         self._build_codes(node.left, current_code + "0")

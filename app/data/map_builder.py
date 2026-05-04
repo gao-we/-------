@@ -19,7 +19,13 @@ def load_graph_from_db(g: Graph) -> None:
         pois = db.query(POI).all()
         for p in pois:
             # 兼容之前 Graph 的设计，由于 ID 是 int，我们转为 str
-            g.add_node(str(p.id), p.name, p.category)
+            g.add_node(
+                str(p.id),
+                p.name,
+                p.category,
+                float(p.latitude) if p.latitude is not None else None,
+                float(p.longitude) if p.longitude is not None else None
+            )
             
         # 加载所有连通边
         roads = db.query(Road).all()
@@ -37,4 +43,3 @@ def load_graph_from_db(g: Graph) -> None:
 
 # 单例全局地图对象
 campus_graph = Graph() 
-

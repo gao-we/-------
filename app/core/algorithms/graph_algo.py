@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple
 from app.core.algorithms.heap_pq import MinHeap
+from app.core.algorithms.custom_structures import SimpleHashSet
 
 class Graph:
     """
@@ -12,10 +13,15 @@ class Graph:
         # 存储节点基础信息用于辅助： { node_id: {name, category, ...} }
         self.node_info: Dict[str, dict] = {}
 
-    def add_node(self, node_id: str, name: str, category: str):
+    def add_node(self, node_id: str, name: str, category: str, latitude: float = None, longitude: float = None):
         if node_id not in self.adj_list:
             self.adj_list[node_id] = []
-            self.node_info[node_id] = {"name": name, "category": category}
+            self.node_info[node_id] = {
+                "name": name,
+                "category": category,
+                "latitude": latitude,
+                "longitude": longitude
+            }
 
     def add_edge(self, u: str, v: str, distance: float, congestion: float = 1.0, transport_type: str = "walk"):
         """
@@ -43,12 +49,12 @@ class Graph:
         pq.push(0, start_id)
         
         # 记录节点是否已被访问（防止重复扩展）
-        visited = set()
+        visited = SimpleHashSet()
 
         while not pq.is_empty():
             current_dist, current_node = pq.pop()
             
-            if current_node in visited:
+            if visited.contains(current_node):
                 continue
             visited.add(current_node)
             
@@ -82,11 +88,9 @@ class Graph:
             
         path = []
         curr = end_id
-        while current_node is not None:
+        while curr is not None:
             path.append(curr)
             curr = parents[curr]
-            if curr is None:
-                break
         
         path.reverse()
         return path, distances[end_id]
@@ -96,18 +100,18 @@ class Graph:
         多点途经规划 (旅行商问题近似/贪心解法：最近邻点算法)
         从 start_id 出发，经过所有 waypoints，并要求返回 start_id
         """
-        unvisited = set(waypoints)
+        unvisited = SimpleHashSet(waypoints)
         current = start_id
         full_path = [start_id]
         total_dist = 0.0
         
         # 每次寻找距离当前点最近的一个未访问目标点
-        while unvisited:
+        while not unvisited.is_empty():
             best_next = None
             best_dist = float('inf')
             best_sub_path = []
             
-            for wp in unvisited:
+            for wp in unvisited.values():
                 sub_path, dist = self.dijkstra(current, wp, "distance")
                 if dist < best_dist and dist != -1:
                     best_dist = dist
@@ -143,7 +147,7 @@ class Graph:
         distances[start_id] = 0
         pq = MinHeap()
         pq.push(0, start_id)
-        visited = set()
+        visited = SimpleHashSet()
         
         while not pq.is_empty():
             dist, node = pq.pop()
@@ -152,7 +156,8 @@ class Graph:
             if dist > max_distance:
                 break
                 
-            if node in visited: continue
+            if visited.contains(node):
+                continue
             visited.add(node)
             
             # 记录符合条件的设施

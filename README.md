@@ -59,3 +59,24 @@
 ### 3.5 美食推荐 (对应 成员B)
 - **精准推荐**：按热门、评价和距离排序，并按**菜系**过滤。(**核心算法为排序，要求同上：不完全排序排好前10，Top-K**)
 - **模糊查找**：输入名称、菜系、饭店进行基于内容的模糊查找及综合排序。(**核心算法：模糊查找算法 + 排序算法**)
+
+---
+
+## 地图抓取数据源（新增）
+
+- 校区/景区地图接口：`GET /api/recommendation/destination/{poi_id}/campus-map`
+- 支持 `provider` 参数：`auto | amap | baidu | osm`
+  - 支持 `force_refresh=true` 强制实时抓取（忽略缓存）
+  - `auto`：优先高德、再百度、最后 OSM(Overpass) 回退
+  - `amap`：只使用高德（需配置 Key）
+  - `baidu`：只使用百度（需配置 Key）
+  - `osm`：只使用 OSM
+
+说明：
+- 地图抓取结果会按 `poi_id + provider + radius_m` 缓存入库（默认 12 小时），减少重复抓取延迟。
+- 返回中包含 `cache.hit` 和 `map.meta`（点位数、道路段数、抓取页数等）用于前端展示细节程度。
+
+环境变量：
+
+- 高德：`AMAP_MAPS_API_KEY`（或 `AMAP_API_KEY`）
+- 百度：`BAIDU_MAPS_API_KEY`（或 `BAIDU_MAP_AK` / `BAIDU_API_KEY`）

@@ -70,3 +70,35 @@ def get_all_nodes():
         "total": len(campus_graph.node_info),
         "nodes": campus_graph.node_info
     }
+
+@router.get("/graph/edges")
+def get_all_edges():
+    """获取去重后的边，用于前端绘制道路参照层。"""
+    unique = set()
+    edges = []
+    for u, neighbors in campus_graph.adj_list.items():
+        for v, dist, _cong, trans in neighbors:
+            key = tuple(sorted((u, v)))
+            if key in unique:
+                continue
+            unique.add(key)
+            u_info = campus_graph.node_info.get(u, {})
+            v_info = campus_graph.node_info.get(v, {})
+            u_lat = u_info.get("latitude")
+            u_lon = u_info.get("longitude")
+            v_lat = v_info.get("latitude")
+            v_lon = v_info.get("longitude")
+            if None in (u_lat, u_lon, v_lat, v_lon):
+                continue
+            edges.append({
+                "from": u,
+                "to": v,
+                "distance": dist,
+                "transport": trans,
+                "from_latitude": u_lat,
+                "from_longitude": u_lon,
+                "to_latitude": v_lat,
+                "to_longitude": v_lon
+            })
+
+    return {"total": len(edges), "edges": edges}

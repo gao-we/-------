@@ -7,10 +7,16 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        .nav-control-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.75rem; padding: 0.75rem; }
+        .nav-select, .nav-input { width: 100%; border: 1px solid #cbd5e1; border-radius: 0.6rem; padding: 0.52rem 0.7rem; background: #fff; }
+        .legend-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.55rem; border-radius: 999px; font-size: 12px; border: 1px solid #cbd5e1; background: #fff; color: #334155; }
+        .legend-dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+    </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-slate-100 min-h-screen">
 <div id="app" class="max-w-7xl mx-auto p-6">
-    <header class="mb-6">
+    <header class="mb-6 bg-white border border-slate-200 rounded-xl shadow-sm px-5 py-4">
         <h1 class="text-3xl font-bold text-gray-900">目的地场所推荐</h1>
         <p class="text-gray-600 mt-2">已进入：{{ destinationName || "未选择目的地" }}</p>
     </header>
@@ -34,7 +40,7 @@
                     <div v-for="p in nearbyPlaces" :key="p.id" class="border rounded p-3 bg-gray-50">
                         <p class="font-medium">{{ p.name }}</p>
                         <p class="text-sm text-gray-600">{{ p.category }} · {{ p.distance }}m</p>
-                        <button @click="planToPlace(p.id)" class="mt-2 text-sm bg-emerald-600 text-white px-3 py-1 rounded">从目的地规划到这里</button>
+                        <button @click="planToPlace(p.id)" class="mt-2 text-sm bg-emerald-600 text-white px-3 py-1 rounded">导航到这里</button>
                     </div>
                 </div>
             </div>
@@ -51,16 +57,163 @@
         </div>
     </section>
 
-    <section class="bg-white rounded-lg shadow p-5 mb-6">
-        <h2 class="text-xl font-semibold mb-4">路线结果</h2>
-        <div v-if="routeResult" class="border rounded p-3 bg-gray-50">
-            <p>总代价：{{ routeResult.total_cost }}</p>
-            <p class="break-all">路径：{{ routeResult.route.join(" -> ") }}</p>
+    <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-6">
+        <h2 class="text-xl font-semibold mb-4">导航图形界面（校区背景图 + 路径展示）</h2>
+        <div class="grid grid-cols-1 xl:grid-cols-4 gap-4 mb-4">
+            <div class="nav-control-card">
+                <label class="text-sm text-gray-600">终点</label>
+                <select v-model="navForm.endId" class="nav-select mt-1">
+                    <option value="">请选择终点</option>
+                    <option v-for="p in nearbyPlaces" :key="'end-'+p.id" :value="String(p.id)">
+                        {{ p.name }}（{{ p.category }}）
+                    </option>
+                </select>
+            </div>
+            <div class="nav-control-card">
+                <label class="text-sm text-gray-600">策略</label>
+                <select v-model="navForm.strategy" class="nav-select mt-1">
+                    <option value="distance">最短距离</option>
+                    <option value="time">最短时间</option>
+                </select>
+            </div>
+            <div class="nav-control-card">
+                <label class="text-sm text-gray-600">交通工具</label>
+                <select v-model="navForm.transport" class="nav-select mt-1">
+                    <option value="any">任意</option>
+                    <option value="walk">步行</option>
+                    <option value="bike">自行车</option>
+                    <option value="shuttle">电瓶车</option>
+                </select>
+            </div>
+            <div class="nav-control-card">
+                <label class="text-sm text-gray-600">抓取半径(m)</label>
+                <div class="flex gap-2 mt-1">
+                    <input v-model.number="campusRadius" type="number" min="600" max="3000" class="nav-input">
+                    <button @click="loadCampusMap" class="bg-slate-700 hover:bg-slate-800 text-white rounded-lg px-3 py-2 whitespace-nowrap transition">刷新</button>
+                </div>
+                <button @click="loadCampusMap(true)" class="mt-2 w-full bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-3 py-2 transition text-sm">强制刷新细节</button>
+            </div>
+            <div class="nav-control-card">
+                <label class="text-sm text-gray-600">地图数据源</label>
+                <select v-model="mapProvider" class="nav-select mt-1">
+                    <option value="auto">自动(优先高德/百度)</option>
+                    <option value="amap">高德</option>
+                    <option value="baidu">百度</option>
+                    <option value="osm">OSM(备用)</option>
+                </select>
+            </div>
         </div>
-        <p v-else class="text-gray-600">点击某个场所的“从目的地规划到这里”可查看路径。</p>
+        <div class="mb-4">
+            <button @click="planRouteWithMap" class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 transition shadow-sm">开始导航</button>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div class="xl:col-span-2 border border-slate-200 rounded-xl bg-slate-50 p-2 shadow-sm">
+                <svg viewBox="0 0 900 420" class="w-full h-[360px] rounded-lg border border-slate-200 bg-white">
+                    <defs>
+                        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#f1f5f9" stroke-width="1"/>
+                        </pattern>
+                    </defs>
+                    <rect x="0" y="0" width="900" height="420" fill="url(#grid)"></rect>
+
+                    <g v-if="campusBackgroundRoads.length > 0">
+                        <polyline
+                            v-for="(road, idx) in campusBackgroundRoads"
+                            :key="'road-'+idx"
+                            :points="road"
+                            fill="none"
+                            stroke="#94a3b8"
+                            stroke-width="1.3"
+                            stroke-linecap="round"
+                            stroke-linejoin="round" />
+                    </g>
+
+                    <g v-if="campusBackgroundBuildings.length > 0">
+                        <polygon
+                            v-for="(b, idx) in campusBackgroundBuildings"
+                            :key="'building-'+idx"
+                            :points="b"
+                            fill="#e2e8f0"
+                            stroke="#cbd5e1"
+                            stroke-width="1" />
+                    </g>
+
+                    <g v-if="routeRenderSegments.length > 0">
+                        <line
+                            v-for="(seg, idx) in routeRenderSegments"
+                            :key="'seg-'+idx"
+                            :x1="seg.x1" :y1="seg.y1" :x2="seg.x2" :y2="seg.y2"
+                            stroke="#2563eb" stroke-width="3.4" stroke-linecap="round" />
+                    </g>
+
+                    <g>
+                        <circle
+                            v-for="n in campusSpotRenderNodes"
+                            :key="'spot-'+n.id"
+                            :cx="n.x" :cy="n.y"
+                            :r="n.isStart || n.isEnd ? 5.8 : 4"
+                            :fill="n.isStart ? '#dc2626' : (n.isEnd ? '#16a34a' : '#7c3aed')" />
+                        <text
+                            v-for="n in campusSpotRenderNodes.filter(x => x.showLabel)"
+                            :key="'lbl-'+n.id"
+                            :x="n.x + 6"
+                            :y="n.y - 5"
+                            class="text-[11px] fill-slate-700">
+                            {{ n.name }}
+                        </text>
+                    </g>
+                </svg>
+                <div class="mt-2 flex flex-wrap gap-2">
+                    <span class="legend-chip"><span class="legend-dot" style="background:#94a3b8"></span>校区道路</span>
+                    <span class="legend-chip"><span class="legend-dot" style="background:#e2e8f0"></span>建筑轮廓</span>
+                    <span class="legend-chip"><span class="legend-dot" style="background:#7c3aed"></span>景点/设施</span>
+                    <span class="legend-chip"><span class="legend-dot" style="background:#dc2626"></span>起点</span>
+                    <span class="legend-chip"><span class="legend-dot" style="background:#16a34a"></span>终点</span>
+                    <span class="legend-chip"><span class="legend-dot" style="background:#2563eb"></span>导航路径</span>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                    <span class="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">抓取模式：{{ prettyScope() }}</span>
+                    <span class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">数据来源：{{ prettyMapSource() }}</span>
+                    <span class="px-2 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">POI点位：{{ mapMeta.spots_count || 0 }}</span>
+                    <span class="px-2 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">道路段：{{ mapMeta.roads_count || 0 }}</span>
+                    <span class="px-2 py-1 rounded-full border" :class="cacheHit ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-orange-50 text-orange-700 border-orange-100'">
+                        {{ cacheHit ? '缓存命中' : '实时抓取' }}
+                    </span>
+                </div>
+            </div>
+
+            <div class="border border-slate-200 rounded-xl p-3 bg-gradient-to-b from-slate-50 to-white shadow-sm">
+                <h3 class="font-semibold mb-2">输出路径展示</h3>
+                <div v-if="routeResult" class="text-sm space-y-2">
+                    <div class="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2 text-indigo-700">
+                        总代价：{{ Number(routeResult.total_cost || 0).toFixed(2) }} · 节点数：{{ (routeResult.route || []).length }}
+                    </div>
+                    <div class="max-h-[220px] overflow-auto space-y-1">
+                        <div
+                            v-for="(nodeId, idx) in routeResult.route"
+                            :key="'step-'+idx"
+                            class="p-2 rounded-lg bg-white border border-slate-200 text-xs flex items-center gap-2">
+                            <span class="w-5 h-5 rounded-full bg-slate-100 text-slate-700 inline-flex items-center justify-center">{{ idx + 1 }}</span>
+                            <span>{{ nodeName(nodeId) }}（#{{ nodeId }}）</span>
+                        </div>
+                    </div>
+                </div>
+                <p v-else class="text-sm text-gray-600">选择终点并点击“开始导航”，这里会显示路径步骤。</p>
+
+                <div class="mt-4 border-t pt-3">
+                    <h4 class="font-medium mb-2 text-sm">校区景点参照</h4>
+                    <div class="max-h-[140px] overflow-auto space-y-1 text-xs">
+                        <div v-for="n in landmarkLabels" :key="'ref-'+n.id" class="bg-white border border-slate-200 rounded-lg px-2 py-1">
+                            {{ n.name }}（{{ n.category }}）
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </section>
 
-    <section class="bg-white rounded-lg shadow p-5">
+    <section class="bg-white rounded-lg shadow p-5 mb-6">
         <h2 class="text-xl font-semibold mb-4">旅游日记管理与交流</h2>
 
         <div class="border rounded p-4 space-y-3 mb-4">
@@ -102,7 +255,7 @@
 </div>
 
 <script>
-const { createApp, ref, reactive, onMounted } = Vue;
+const { createApp, ref, reactive, onMounted, watch } = Vue;
 
 createApp({
     setup() {
@@ -118,10 +271,42 @@ createApp({
         const commentForms = reactive({});
         const diaryForm = reactive({ title: "", content: "" });
         const diarySearchKeyword = ref("");
+        const allNodes = ref({});
+        const navForm = reactive({ endId: "", strategy: "distance", transport: "any" });
+
+        const campusRadius = ref(1200);
+        const mapProvider = ref(localStorage.getItem("map_provider") || "auto");
+        const mapScope = ref("unknown");
+        const mapSource = ref("unknown");
+        const campusMapRaw = ref({ roads: [], buildings: [], spots: [] });
+        const mapMeta = ref({});
+        const cacheHit = ref(false);
+        const campusBackgroundRoads = ref([]);
+        const campusBackgroundBuildings = ref([]);
+        const campusSpotRenderNodes = ref([]);
+        const routeRenderSegments = ref([]);
+        const landmarkLabels = ref([]);
 
         const params = new URLSearchParams(window.location.search);
         const poiId = params.get("poi_id");
         const destinationName = ref(params.get("name") || "");
+
+        const nodeName = (id) => allNodes.value[String(id)]?.name || `节点${id}`;
+        const ensureCommentForm = (id) => { if (!commentForms[id]) commentForms[id] = { content: "", parentId: "" }; };
+        const prettyMapSource = () => {
+            const mapping = {
+                "amap-mcp-compatible": "高德地图",
+                "baidu-mcp-compatible": "百度地图",
+                "osm-overpass": "OSM(备用)"
+            };
+            return mapping[mapSource.value] || mapSource.value || "未知";
+        };
+        const prettyScope = () => (mapScope.value === "internal" ? "目的地内部" : (mapScope.value === "around" ? "周边退化模式" : "未知"));
+
+        const loadGraphNodes = async () => {
+            const res = await axios.get(`${API_BASE}/api/routing/graph/nodes`);
+            allNodes.value = res.data?.nodes || {};
+        };
 
         const loadRecommendations = async () => {
             if (!poiId) {
@@ -133,34 +318,168 @@ createApp({
                 const res = await axios.get(`${API_BASE}/api/recommendation/destination/${poiId}/recommendations`);
                 destination.value = res.data?.destination || null;
                 if (!destinationName.value && destination.value) destinationName.value = destination.value.name;
-                routeStartId.value = res.data?.route_start_id || "";
+                routeStartId.value = String(res.data?.route_start_id || "");
                 nearbyPlaces.value = res.data?.nearby_places || [];
                 foodRecommendations.value = res.data?.food_recommendations || [];
+                if (!navForm.endId && nearbyPlaces.value.length > 0) navForm.endId = String(nearbyPlaces.value[0].id);
             } catch (err) {
                 error.value = err?.response?.data?.detail || err?.message || "加载失败";
             }
         };
 
-        const ensureCommentForm = (id) => {
-            if (!commentForms[id]) commentForms[id] = { content: "", parentId: "" };
+        const loadCampusMap = async (forceRefresh = false) => {
+            if (!poiId) return;
+            try {
+                localStorage.setItem("map_provider", mapProvider.value || "auto");
+                const res = await axios.get(`${API_BASE}/api/recommendation/destination/${poiId}/campus-map`, {
+                    params: {
+                        radius_m: campusRadius.value || 1200,
+                        provider: mapProvider.value || "auto",
+                        force_refresh: forceRefresh ? "true" : "false"
+                    }
+                });
+                mapScope.value = res.data?.map?.scope || "unknown";
+                mapSource.value = res.data?.map?.provider || "osm-overpass";
+                campusMapRaw.value = res.data?.map || { roads: [], buildings: [], spots: [] };
+                mapMeta.value = res.data?.map?.meta || {};
+                cacheHit.value = Boolean(res.data?.cache?.hit);
+                buildMapView(routeResult.value?.route || []);
+            } catch (err) {
+                mapScope.value = "unknown";
+                mapSource.value = "unavailable";
+                campusMapRaw.value = { roads: [], buildings: [], spots: [] };
+                mapMeta.value = {};
+                cacheHit.value = false;
+                buildMapView([]);
+                const detail = err?.response?.data?.detail || err?.message || "校区地图抓取失败";
+                error.value = `地图源(${mapProvider.value})抓取失败：${detail}`;
+            }
         };
 
-        const planToPlace = async (targetId) => {
-            if (!routeStartId.value) return;
+        watch(mapProvider, () => {
+            loadCampusMap();
+        });
+
+        const buildMapView = (routeIds = []) => {
+            const roads = campusMapRaw.value.roads || [];
+            const buildings = campusMapRaw.value.buildings || [];
+            const spots = campusMapRaw.value.spots || [];
+
+            const routeNodes = (routeIds || [])
+                .map(id => ({ id: String(id), ...allNodes.value[String(id)] }))
+                .filter(n => n && Number.isFinite(Number(n.latitude)) && Number.isFinite(Number(n.longitude)))
+                .map(n => ({
+                    id: n.id,
+                    name: n.name || `节点${n.id}`,
+                    category: n.category || "路线点",
+                    latitude: Number(n.latitude),
+                    longitude: Number(n.longitude),
+                    isRouteNode: true
+                }));
+
+            const allGeoPoints = [];
+            roads.forEach(line => line.forEach(p => allGeoPoints.push({ lat: Number(p.lat), lon: Number(p.lon) })));
+            buildings.forEach(poly => poly.forEach(p => allGeoPoints.push({ lat: Number(p.lat), lon: Number(p.lon) })));
+            spots.forEach(s => allGeoPoints.push({ lat: Number(s.latitude), lon: Number(s.longitude) }));
+            routeNodes.forEach(s => allGeoPoints.push({ lat: Number(s.latitude), lon: Number(s.longitude) }));
+            if (allGeoPoints.length === 0) {
+                campusBackgroundRoads.value = [];
+                campusBackgroundBuildings.value = [];
+                campusSpotRenderNodes.value = [];
+                routeRenderSegments.value = [];
+                landmarkLabels.value = [];
+                return;
+            }
+
+            let minLat = Math.min(...allGeoPoints.map(p => p.lat));
+            let maxLat = Math.max(...allGeoPoints.map(p => p.lat));
+            let minLon = Math.min(...allGeoPoints.map(p => p.lon));
+            let maxLon = Math.max(...allGeoPoints.map(p => p.lon));
+            if (maxLat - minLat < 0.0008) { maxLat += 0.0004; minLat -= 0.0004; }
+            if (maxLon - minLon < 0.0008) { maxLon += 0.0004; minLon -= 0.0004; }
+
+            const latPad = (maxLat - minLat) * 0.12;
+            const lonPad = (maxLon - minLon) * 0.12;
+            minLat -= latPad; maxLat += latPad; minLon -= lonPad; maxLon += lonPad;
+
+            const padding = 18, width = 900 - padding * 2, height = 420 - padding * 2;
+            const toX = lon => padding + ((lon - minLon) / (maxLon - minLon)) * width;
+            const toY = lat => padding + (1 - (lat - minLat) / (maxLat - minLat)) * height;
+            const pointsStr = arr => arr.map(p => `${toX(Number(p.lon || p.longitude)).toFixed(2)},${toY(Number(p.lat || p.latitude)).toFixed(2)}`).join(" ");
+
+            campusBackgroundRoads.value = roads.slice(0, 320).map(pointsStr).filter(s => s.length > 0);
+            campusBackgroundBuildings.value = buildings.slice(0, 240).map(pointsStr).filter(s => s.length > 0);
+
+            const routeSet = new Set((routeIds || []).map(String));
+            const spotsRender = spots.map((s, idx) => ({
+                id: `spot-${idx}`,
+                name: s.name,
+                category: s.category || "景点",
+                x: toX(Number(s.longitude)),
+                y: toY(Number(s.latitude)),
+                isStart: false,
+                isEnd: false,
+                showLabel: false
+            }));
+
+            routeNodes.forEach(n => {
+                spotsRender.push({
+                    id: `route-${n.id}`,
+                    name: n.name,
+                    category: n.category,
+                    x: toX(Number(n.longitude)),
+                    y: toY(Number(n.latitude)),
+                    isStart: String(n.id) === String(routeStartId.value),
+                    isEnd: String(n.id) === String(navForm.endId),
+                    showLabel: true
+                });
+            });
+
+            const withPriority = spotsRender.map(n => ({
+                ...n,
+                priority: (n.isStart || n.isEnd ? 100 : 0) + (["图书馆", "花园", "教学楼/建筑", "教学楼/校区设施"].includes(n.category) ? 20 : 0)
+            }));
+            withPriority.sort((a, b) => b.priority - a.priority);
+            const labels = withPriority.slice(0, 18).map(n => ({ ...n, showLabel: true }));
+            const labelIds = new Set(labels.map(x => x.id));
+            campusSpotRenderNodes.value = spotsRender.map(n => ({ ...n, showLabel: labelIds.has(n.id) || n.isStart || n.isEnd }));
+            landmarkLabels.value = labels.filter(n => !n.id.startsWith("route-"));
+
+            const routeCoords = (routeIds || []).map(id => {
+                const info = allNodes.value[String(id)];
+                if (!info) return null;
+                const lat = Number(info.latitude), lon = Number(info.longitude);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+                return { x: toX(lon), y: toY(lat) };
+            }).filter(Boolean);
+            const segs = [];
+            for (let i = 0; i < routeCoords.length - 1; i += 1) {
+                segs.push({ x1: routeCoords[i].x, y1: routeCoords[i].y, x2: routeCoords[i + 1].x, y2: routeCoords[i + 1].y });
+            }
+            routeRenderSegments.value = segs;
+        };
+
+        const planRouteWithMap = async () => {
+            if (!routeStartId.value || !navForm.endId) {
+                error.value = "请先选择终点。";
+                return;
+            }
             error.value = "";
             try {
-                const body = {
-                    start_id: String(routeStartId.value),
-                    end_id: String(targetId),
-                    waypoints: []
-                };
+                const body = { start_id: String(routeStartId.value), end_id: String(navForm.endId), waypoints: [] };
                 const res = await axios.post(`${API_BASE}/api/routing/shortest_path`, body, {
-                    params: { strategy: "distance", transport: "any" }
+                    params: { strategy: navForm.strategy, transport: navForm.transport }
                 });
                 routeResult.value = res.data;
+                buildMapView(res.data?.route || []);
             } catch (err) {
                 error.value = err?.response?.data?.detail || err?.message || "路径计算失败";
             }
+        };
+
+        const planToPlace = async (targetId) => {
+            navForm.endId = String(targetId);
+            await planRouteWithMap();
         };
 
         const listDiaries = async () => {
@@ -178,16 +497,9 @@ createApp({
             error.value = "";
             try {
                 const kw = diarySearchKeyword.value.trim();
-                if (!kw) {
-                    await listDiaries();
-                    return;
-                }
+                if (!kw) return listDiaries();
                 const res = await axios.get(`${API_BASE}/api/social/diary/search`, { params: { keyword: kw } });
-                diaries.value = (res.data?.results || []).map(item => ({
-                    id: item.id,
-                    title: item.title,
-                    views: item.views
-                }));
+                diaries.value = (res.data?.results || []).map(item => ({ id: item.id, title: item.title, views: item.views }));
                 diaries.value.forEach(d => ensureCommentForm(d.id));
             } catch (err) {
                 error.value = err?.response?.data?.detail || err?.message || "搜索失败";
@@ -197,15 +509,13 @@ createApp({
         const createDiary = async () => {
             error.value = "";
             try {
-                const title = diaryForm.title.trim();
-                const content = diaryForm.content.trim();
+                const title = diaryForm.title.trim(), content = diaryForm.content.trim();
                 if (!title || !content) {
                     error.value = "标题和内容不能为空";
                     return;
                 }
                 await axios.post(`${API_BASE}/api/social/diary`, null, { params: { title, content } });
-                diaryForm.title = "";
-                diaryForm.content = "";
+                diaryForm.title = ""; diaryForm.content = "";
                 await listDiaries();
             } catch (err) {
                 error.value = err?.response?.data?.detail || err?.message || "发布失败";
@@ -226,8 +536,7 @@ createApp({
                 if (form.parentId && form.parentId.trim()) params.parent_comment_id = form.parentId.trim();
                 const res = await axios.post(`${API_BASE}/api/social/diary/${diaryId}/comment`, null, { params });
                 comments[diaryId] = res.data?.tree || [];
-                form.content = "";
-                form.parentId = "";
+                form.content = ""; form.parentId = "";
             } catch (err) {
                 error.value = err?.response?.data?.detail || err?.message || "评论失败";
             }
@@ -255,8 +564,12 @@ createApp({
 
         onMounted(async () => {
             await loadRecommendations();
+            await loadGraphNodes();
+            await loadCampusMap();
+            buildMapView(routeResult.value?.route || []);
             await listDiaries();
         });
+
         return {
             destinationName,
             error,
@@ -265,8 +578,25 @@ createApp({
             foodRecommendations,
             routeStartId,
             routeResult,
+            navForm,
+            campusRadius,
+            mapProvider,
+            mapScope,
+            mapSource,
+            mapMeta,
+            cacheHit,
+            prettyMapSource,
+            prettyScope,
+            campusBackgroundRoads,
+            campusBackgroundBuildings,
+            campusSpotRenderNodes,
+            routeRenderSegments,
+            landmarkLabels,
             loadRecommendations,
+            loadCampusMap,
             planToPlace,
+            planRouteWithMap,
+            nodeName,
             diaries,
             comments,
             commentForms,

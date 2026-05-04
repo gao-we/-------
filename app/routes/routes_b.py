@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Query, Depends
+import fastapi
 from typing import List, Optional
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models.domain import POI, Food
+from app.models.domain import POI, Food, CampusMapCache
 from app.core.algorithms.sort_search import get_top_k, fuzzy_search_filter
 from app.core.algorithms.trie_kmp import Trie
 from app.data.map_builder import campus_graph
+from app.data.campus_map_fetcher import fetch_campus_map
 
 router = APIRouter()
 
@@ -167,6 +170,81 @@ def destination_recommendations(
         ],
     }
 
+@router.get("/destination/{poi_id}/campus-map")
+def destination_campus_map(
+    poi_id: int,
+    radius_m: int = 1200,
+    provider: str = Query("auto", description="地图数据源: auto/amap/baidu/osm"),
+    force_refresh: bool = Query(False, description="是否强制刷新高德/百度/OSM抓取结果"),
+    db: Session = Depends(get_db)
+):
+    """
+    根据选中目的地在线抓取校区/景区地图要素（道路、建筑、图书馆、花园、教学楼等）。
+    """
+    poi = db.query(POI).filter(POI.id == poi_id).first()
+    if not poi:
+        raise fastapi.HTTPException(status_code=404, detail="查找不到该地点")
+    if poi.latitude is None or poi.longitude is None:
+        raise fastapi.HTTPException(status_code=400, detail="该地点缺少坐标，无法抓取地图")
+
+    provider_key = (provider or "auto").strip().lower()
+    now = datetime.utcnow()
+    cache_ttl_hours = 12
+    stale_before = now - timedelta(hours=cache_ttl_hours)
+
+    cached = None
+    if not force_refresh:
+        cache_q = (
+            db.query(CampusMapCache)
+            .filter(CampusMapCache.poi_id == poi.id)
+            .filter(CampusMapCache.provider == provider_key)
+            .filter(CampusMapCache.radius_m == int(radius_m))
+            .filter(CampusMapCache.created_at >= stale_before)
+            .order_by(CampusMapCache.id.desc())
+        )
+        cached = cache_q.first()
+
+    if cached:
+        map_data = cached.map_payload
+        cache_hit = True
+    else:
+        try:
+            map_data = fetch_campus_map(
+                poi.name,
+                float(poi.latitude),
+                float(poi.longitude),
+                radius_m=radius_m,
+                provider=provider,
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise fastapi.HTTPException(status_code=400, detail=str(exc))
+
+        cache_record = CampusMapCache(
+            poi_id=poi.id,
+            provider=provider_key,
+            radius_m=int(radius_m),
+            map_payload=map_data,
+        )
+        db.add(cache_record)
+        db.commit()
+        cache_hit = False
+
+    return {
+        "status": "success",
+        "cache": {
+            "hit": cache_hit,
+            "ttl_hours": cache_ttl_hours,
+        },
+        "destination": {
+            "id": poi.id,
+            "name": poi.name,
+            "category": poi.category,
+            "latitude": float(poi.latitude),
+            "longitude": float(poi.longitude),
+        },
+        "map": map_data,
+    }
+
 @router.get("/suggest/attractions")
 def recommend_attractions(
     limit: int = 10,
@@ -242,9 +320,6 @@ def recommend_foods(
         "keyword": keyword,
         "recommendations": [{"id": i.id, "name": i.name, "rating": i.rating, "price_range": i.price_range} for i in top_items]
     }
-
-
-import fastapi
 from app.models.domain import Location
 
 @router.get("/suggest/attractions/{poi_id}")
